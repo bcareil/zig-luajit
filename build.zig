@@ -42,7 +42,7 @@ pub fn build(b: *std.build.Builder) void {
 
     const lib = b.addStaticLibrary("zig-luajit", "src/main.zig");
     addLuajit(lib) catch unreachable;
-    lib.addIncludePath(luajit_src_path);
+    lib.addIncludeDir(luajit_src_path);
     lib.setTarget(target);
     lib.setBuildMode(mode);
     lib.install();
@@ -83,7 +83,7 @@ fn generateLjArchOutput(cwd: []const u8, zig_exe: []const u8, allocator: std.mem
     try zig_cmd.append(zig_exe);
     try zig_cmd.append("cc");
     try zig_cmd.append("-E");
-    try zig_cmd.append("./third_party/luajit/src/lj_arch.h");
+    try zig_cmd.append(thisDir() ++ "/third_party/luajit/src/lj_arch.h");
     try zig_cmd.append("-dM");
 
     var child_proc = try std.ChildProcess.init(zig_cmd.items, allocator);
@@ -112,7 +112,7 @@ fn createBuildvmExeStep(builder: *std.build.Builder, host_cflags: []const []cons
     };
 
     var buildvm_exe = builder.addExecutable("buildvm", null);
-    buildvm_exe.addIncludePath(luajit_src_path);
+    buildvm_exe.addIncludeDir(luajit_src_path);
     buildvm_exe.addCSourceFiles(buildvm_c, host_cflags);
     buildvm_exe.linkSystemLibrary("m");
     buildvm_exe.linkLibC();
@@ -245,6 +245,9 @@ pub fn addLuajit(exe: *std.build.LibExeObjStep) !void {
             .i386 => {
                 break :blk "x86";
             },
+            .x86_64 => {
+                break :blk "x64";
+            },
             .powerpc, .powerpcle => {
                 break :blk "ppc";
             },
@@ -317,35 +320,33 @@ pub fn addLuajit(exe: *std.build.LibExeObjStep) !void {
     }
 
     const version_define = "LJ_ARCH_VERSION ";
-    var version: ?[]u8 = null;
-    defer if (version) |v| allocator.free(v);
-    if (std.mem.indexOf(u8, stdout, version_define)) |i| {
-        const version_start = i + version_define.len;
-        if (std.mem.indexOfPosLinear(u8, stdout, version_start, "\n")) |version_end| {
-            const version_slice = stdout[version_start..version_end];
-            version = try std.fmt.allocPrint(allocator, "VER={s}", .{version_slice});
+    const version = blk: {
+        var vs: []const u8 = "";
+        if (std.mem.indexOf(u8, stdout, version_define)) |i| {
+            const version_start = i + version_define.len;
+            if (std.mem.indexOfPosLinear(u8, stdout, version_start, "\n")) |version_end| {
+                vs = stdout[version_start..version_end];
+            }
         }
-    }
-    if (version) |v| {
-        try dasm_aflags.append("-D");
-        try dasm_aflags.append(v);
-    } else {
-        std.log.err("Failed to identify the version out of lj_arch.h\n", .{});
-        return error.ParseError;
-    }
+        break :blk try std.fmt.allocPrint(allocator, "VER={s}", .{vs});
+    };
+    defer allocator.free(version);
+
+    try dasm_aflags.append("-D");
+    try dasm_aflags.append(version);
 
     if (target_os_tag == .windows) {
         try dasm_aflags.append("-D");
         try dasm_aflags.append("WIN");
     }
 
-    var dasm_arch = @tagName(target_arch);
+    var dasm_arch = luajit_arch_name;
     if (target_arch == .aarch64) {
         // need to rename aarch64 to arm64 to match the vm_<arch>.dasc filename
         dasm_arch = "arm64";
     }
     if (target_arch == .x86_64) {
-        if (std.mem.indexOf(u8, stdout, "LJ_FR2 1")) |_| {
+        if (std.mem.indexOf(u8, stdout, "LJ_FR2 1")) |_| {} else {
             dasm_arch = "x86";
         }
     } else if (target_arch == .arm) {
@@ -411,16 +412,26 @@ pub fn addLuajit(exe: *std.build.LibExeObjStep) !void {
 
     var luajit_sys_libs = try std.ArrayList([]const u8).initCapacity(allocator, 4);
     defer luajit_sys_libs.deinit();
+    var luajit_flags = try std.ArrayList([]const u8).initCapacity(allocator, 4);
+    defer luajit_flags.deinit();
+
+    try luajit_flags.append("-fno-sanitize=undefined");
+    try luajit_flags.append("-O2");
+    try luajit_flags.append("-fomit-frame-pointer");
+
     try luajit_sys_libs.append("m");
+
     switch (target_os_tag) {
-        .freebsd, .linux => try luajit_sys_libs.append("dl"),
+        .freebsd => try luajit_sys_libs.append("dl"),
+        .linux => {
+            try luajit_sys_libs.append("dl");
+            try luajit_sys_libs.append("unwind");
+            try luajit_flags.append("-funwind-tables");
+            try luajit_flags.append("-DLUAJIT_UNWIND_EXTERNAL");
+        },
         // NOTE: PS3 would require pthread but it's not supported by zig
         else => {},
     }
-
-    const luajit_flags: []const []const u8 = &.{
-        "-fno-sanitize=undefined", "-O2", "-fomit-frame-pointer",
-    };
 
     var luajit_src = try std.ArrayList([]const u8).initCapacity(allocator, ljlib_c.len + ljcore_c.len);
     inline for (ljlib_c) |c| {
@@ -432,7 +443,8 @@ pub fn addLuajit(exe: *std.build.LibExeObjStep) !void {
 
     var luajit_lib = exe.builder.addStaticLibrary("luajit", null);
     luajit_lib.step.dependOn(buildvm_gen_step);
-    luajit_lib.addCSourceFiles(luajit_src.items, luajit_flags);
+    luajit_lib.linkLibC();
+    luajit_lib.addCSourceFiles(luajit_src.items, luajit_flags.items);
     if (target_os_tag == .windows) {
         luajit_lib.addObjectFile(luajit_src_path ++ "/lj_vm.o");
     } else {
@@ -444,7 +456,7 @@ pub fn addLuajit(exe: *std.build.LibExeObjStep) !void {
         exe.linkSystemLibrary(l);
     }
 
-    exe.addIncludePath(luajit_src_path);
+    exe.addIncludeDir(luajit_src_path);
 
     exe.addPackage(pkg);
 }
