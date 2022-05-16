@@ -76,20 +76,18 @@ pub fn buildExample(b: *std.build.Builder, target: std.zig.CrossTarget, mode: st
 }
 
 /// returns an owned slice
-fn generateLjArchOutput(cwd: []const u8, zig_exe: []const u8, allocator: std.mem.Allocator) ![]u8 {
+fn generateLjArchOutput(zig_exe: []const u8, allocator: std.mem.Allocator) ![]u8 {
     var zig_cmd = std.ArrayList([]const u8).init(allocator);
     defer zig_cmd.deinit();
 
     try zig_cmd.append(zig_exe);
     try zig_cmd.append("cc");
     try zig_cmd.append("-E");
-    try zig_cmd.append(thisDir() ++ "/third_party/luajit/src/lj_arch.h");
+    try zig_cmd.append(luajit_src_path ++ "lj_arch.h");
     try zig_cmd.append("-dM");
 
-    var child_proc = try std.ChildProcess.init(zig_cmd.items, allocator);
-    defer child_proc.deinit();
+    var child_proc = std.ChildProcess.init(zig_cmd.items, allocator);
 
-    child_proc.cwd = cwd;
     child_proc.stdin_behavior = .Close;
     child_proc.stdout_behavior = .Pipe;
     child_proc.stderr_behavior = .Inherit;
@@ -194,12 +192,11 @@ fn createBuildvmGenStep(builder: *std.build.Builder, buildvm_exe: *std.build.Lib
 
 pub fn addLuajit(exe: *std.build.LibExeObjStep) !void {
     const allocator = exe.builder.allocator;
-    const cwd = exe.builder.build_root;
 
     const target_os_tag = exe.target.os_tag orelse exe.builder.host.target.os.tag;
     const target_arch = exe.target.cpu_arch orelse exe.builder.host.target.cpu.arch;
 
-    var stdout = try generateLjArchOutput(cwd, exe.builder.zig_exe, exe.builder.allocator);
+    var stdout = try generateLjArchOutput(exe.builder.zig_exe, exe.builder.allocator);
     defer allocator.destroy(stdout.ptr);
 
     var minilua_flags = std.ArrayList([]const u8).init(allocator);
@@ -400,8 +397,7 @@ pub fn addLuajit(exe: *std.build.LibExeObjStep) !void {
     minilua_exe.setTarget(std.zig.CrossTarget.fromTarget(exe.builder.host.target));
     const minilua_run = minilua_exe.run();
 
-    var minilua_cwd = try std.fmt.allocPrint(allocator, "{s}/third_party/luajit/src", .{cwd});
-    minilua_run.cwd = minilua_cwd;
+    minilua_run.cwd = luajit_src_path;
     minilua_run.addArg("../dynasm/dynasm.lua");
     minilua_run.addArgs(dasm_aflags.items);
 
