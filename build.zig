@@ -86,7 +86,8 @@ fn generateLjArchOutput(zig_exe: []const u8, allocator: std.mem.Allocator) ![]u8
     try zig_cmd.append(luajit_src_path ++ "lj_arch.h");
     try zig_cmd.append("-dM");
 
-    var child_proc = std.ChildProcess.init(zig_cmd.items, allocator);
+    var child_proc = try std.ChildProcess.init(zig_cmd.items, allocator);
+    defer child_proc.deinit();
 
     child_proc.stdin_behavior = .Close;
     child_proc.stdout_behavior = .Pipe;
