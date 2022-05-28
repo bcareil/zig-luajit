@@ -6,7 +6,7 @@ pub const pkg = std.build.Pkg{
     .dependencies = null,
 };
 
-const luajit_src_path = thisDir() ++ "/third_party/luajit/src/";
+pub const luajit_src_path = thisDir() ++ "/third_party/luajit/src/";
 const ljlib_c: []const []const u8 = &.{
     "lib_base.c",  "lib_math.c", "lib_bit.c", "lib_string.c",
     "lib_table.c", "lib_io.c",   "lib_os.c",  "lib_package.c",
@@ -456,4 +456,8 @@ pub fn addLuajit(exe: *std.build.LibExeObjStep) !void {
     exe.addIncludeDir(luajit_src_path);
 
     exe.addPackage(pkg);
+}
+
+pub fn includeLuajit(exe: *std.build.LibExeObjStep) void {
+    exe.addIncludeDir(luajit_src_path);
 }
