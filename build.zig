@@ -2,7 +2,7 @@ const std = @import("std");
 
 pub const pkg = std.build.Pkg{
     .name = "luajit",
-    .path = .{ .path = thisDir() ++ "/src/main.zig" },
+    .source = .{ .path = thisDir() ++ "/src/main.zig" },
     .dependencies = null,
 };
 
